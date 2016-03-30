@@ -55,10 +55,34 @@ def container_from_config(original_layer_dict, custom_objects={}):
 
         nodes = layer_dict.get('node_config')
         for node in nodes:
-            layer = container_from_config(layer_dict['nodes'].get(node['name']))
-            node['layer'] = layer
-            node['create_output'] = False  # outputs will be added below
-            graph_layer.add_node(**node)
+            sublayer_dict = layer_dict['nodes'].get(node['name'])
+            # Siamese layers initialisation made through `add_shared_node`.
+            # The internal SiameseHead's are not initialised in this step
+            if sublayer_dict.get('name') == 'Siamese':
+                sub_layer = container_from_config(sublayer_dict.get('layer'))
+                sublayer_dict['layer'] = sub_layer
+                inputs = [input['custom_name']
+                          for input in sublayer_dict['inputs']]
+                graph_layer.add_shared_node(
+                    sub_layer, node['name'], inputs,
+                    sublayer_dict['merge_mode'], sublayer_dict['concat_axis'],
+                    sublayer_dict.get('dot_axes', -1))
+            # In case we have SiameseHeads, we need to attach them
+            # to the Siamese Layer
+            elif sublayer_dict.get('name') == 'SiameseHead':
+                sh = SiameseHead(sublayer_dict['head'])
+                sh.previous = graph_layer.nodes[node['inputs'][0]]
+                sh_name = node['name']
+                sh.name = sh_name
+                graph_layer.namespace.add(sh_name)
+                graph_layer.nodes[sh_name] = sh
+                graph_layer.node_config.append(node)
+            else:
+                layer = container_from_config(
+                    layer_dict['nodes'].get(node['name']))
+                node['layer'] = layer
+                node['create_output'] = False  # outputs will be added below
+                graph_layer.add_node(**node)
 
         outputs = layer_dict.get('output_config')
         for output in outputs:
